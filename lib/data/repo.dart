@@ -454,4 +454,41 @@ class Repo {
   static Future<void> deleteJarContribution(String id) => _db
       .from('jar_contribution')
       .update({'deleted_at': DateTime.now().toUtc().toIso8601String()}).eq('id', id);
+
+  // ---------------------------------------------------------------- history
+
+  /// Groups and every category, archived ones included, so old entries still have names.
+  static Future<(List<Group>, List<Category>)> loadCatalog() async {
+    final results = await Future.wait<List<Map<String, dynamic>>>([
+      _db
+          .from('category_group')
+          .select('id, name, sort_order')
+          .isFilter('deleted_at', null)
+          .order('sort_order'),
+      _db.from('category').select('id, name, group_id').isFilter('deleted_at', null).order('name'),
+    ]);
+    return (
+      [
+        for (final g in results[0])
+          Group(g['id'] as String, g['name'] as String, g['sort_order'] as int, 0),
+      ],
+      [
+        for (final c in results[1])
+          Category(c['id'] as String, c['name'] as String, c['group_id'] as String),
+      ],
+    );
+  }
+
+  static Future<List<Expense>> loadExpenses(DateTime from, DateTime to) async {
+    final rows = await _db
+        .from('expense')
+        .select('id, amount_cents, category_id, spent_on, note')
+        .isFilter('deleted_at', null)
+        .gte('spent_on', isoDate(from))
+        .lte('spent_on', isoDate(to))
+        .order('spent_on', ascending: false)
+        .order('created_at', ascending: false)
+        .limit(2000);
+    return [for (final r in rows) Expense.fromRow(r)];
+  }
 }

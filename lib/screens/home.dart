@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/repo.dart';
 import '../util/format.dart';
 import 'add_expense.dart';
+import 'history.dart';
 import 'jars.dart';
 import 'payday.dart';
 
@@ -41,6 +42,11 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
     _reload(); // also picks up any new categories, even if nothing was saved
+  }
+
+  Future<void> _openHistory() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HistoryScreen()));
+    if (mounted) _reload();
   }
 
   Future<void> _openJars() async {
@@ -104,6 +110,11 @@ class _HomeScreenState extends State<HomeScreen> {
           appBar: AppBar(
             title: Text(data == null ? 'This week' : shortRange(data.weekStart, data.weekEnd)),
             actions: [
+              IconButton(
+                tooltip: 'History & search',
+                icon: const Icon(Icons.search),
+                onPressed: _openHistory,
+              ),
               IconButton(
                 tooltip: 'Sign out',
                 icon: const Icon(Icons.logout),
