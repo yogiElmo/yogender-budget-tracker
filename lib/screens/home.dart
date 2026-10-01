@@ -6,6 +6,7 @@ import '../util/format.dart';
 import 'add_expense.dart';
 import 'history.dart';
 import 'income.dart';
+import 'insights.dart';
 import 'jars.dart';
 import 'payday.dart';
 import 'settings.dart';
@@ -57,6 +58,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openHistory() async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HistoryScreen()));
     if (mounted) _reload();
+  }
+
+  Future<void> _openInsights() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const InsightsScreen()));
   }
 
   Future<void> _openIncome() async {
@@ -125,6 +130,11 @@ class _HomeScreenState extends State<HomeScreen> {
           appBar: AppBar(
             title: Text(data == null ? 'This week' : shortRange(data.weekStart, data.weekEnd)),
             actions: [
+              IconButton(
+                tooltip: 'Insights',
+                icon: const Icon(Icons.insights_outlined),
+                onPressed: _openInsights,
+              ),
               IconButton(
                 tooltip: 'History & search',
                 icon: const Icon(Icons.search),

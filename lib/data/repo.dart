@@ -4,6 +4,9 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../util/format.dart';
+import 'insights.dart';
+
+export 'insights.dart';
 
 SupabaseClient get _db => Supabase.instance.client;
 
@@ -831,5 +834,59 @@ class Repo {
       'source': 'residual',
       'contributed_on': isoDate(on),
     });
+  }
+
+  // ---------------------------------------------------------------- insights
+
+  /// Raw material for the insights screen: the last [weeks] budget weeks
+  /// (this week included), every budget version, and the expenses in range.
+  static Future<InsightsInput> loadInsights(int weeks) async {
+    final current = weekStartOf(DateTime.now());
+    final from = addDays(current, -7 * (weeks - 1));
+    final to = addDays(current, 6);
+    final results = await Future.wait<List<Map<String, dynamic>>>([
+      _db
+          .from('budget_config')
+          .select('weekly_amount_cents, effective_from, budget_split(group_id, percent, deleted_at)')
+          .isFilter('deleted_at', null)
+          .order('effective_from'),
+      _db
+          .from('category_group')
+          .select('id, name, sort_order')
+          .isFilter('deleted_at', null)
+          .order('sort_order'),
+      _db.from('category').select('id, name, group_id').isFilter('deleted_at', null),
+      _db
+          .from('expense')
+          .select('id, amount_cents, category_id, spent_on, note')
+          .isFilter('deleted_at', null)
+          .gte('spent_on', isoDate(from))
+          .lte('spent_on', isoDate(to))
+          .limit(5000),
+    ]);
+    return InsightsInput(
+      [for (var i = 0; i < weeks; i++) addDays(from, 7 * i)],
+      [
+        for (final c in results[0])
+          BudgetVersion(
+            DateTime.parse(c['effective_from'] as String),
+            c['weekly_amount_cents'] as int,
+            {
+              for (final sp in (c['budget_split'] as List? ?? const []))
+                if (sp['deleted_at'] == null)
+                  sp['group_id'] as String: (sp['percent'] as num).toDouble(),
+            },
+          ),
+      ],
+      [
+        for (final g in results[1])
+          Group(g['id'] as String, g['name'] as String, g['sort_order'] as int, 0),
+      ],
+      [
+        for (final c in results[2])
+          Category(c['id'] as String, c['name'] as String, c['group_id'] as String),
+      ],
+      [for (final e in results[3]) Expense.fromRow(e)],
+    );
   }
 }
