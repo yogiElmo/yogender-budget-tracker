@@ -5,6 +5,7 @@ import '../data/repo.dart';
 import '../util/format.dart';
 import 'add_expense.dart';
 import 'history.dart';
+import 'income.dart';
 import 'jars.dart';
 import 'payday.dart';
 import 'settings.dart';
@@ -55,6 +56,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _openHistory() async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HistoryScreen()));
+    if (mounted) _reload();
+  }
+
+  Future<void> _openIncome() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const IncomeScreen()));
     if (mounted) _reload();
   }
 
@@ -152,6 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onAdd: () => _openAdd(data),
                   onPayday: _openPayday,
                   onJars: _openJars,
+                  onIncome: _openIncome,
                 ),
               ),
           },
@@ -169,6 +176,7 @@ class _Dashboard extends StatelessWidget {
   final VoidCallback onAdd;
   final VoidCallback onPayday;
   final VoidCallback onJars;
+  final VoidCallback onIncome;
   const _Dashboard(
       {required this.data,
       required this.expenses,
@@ -176,7 +184,8 @@ class _Dashboard extends StatelessWidget {
       required this.onDeleteTap,
       required this.onAdd,
       required this.onPayday,
-      required this.onJars});
+      required this.onJars,
+      required this.onIncome});
 
   @override
   Widget build(BuildContext context) {
@@ -279,6 +288,26 @@ class _Dashboard extends StatelessWidget {
           done: data.transfersDone,
           isPayday: DateTime.now().weekday == DateTime.tuesday,
           onTap: onPayday,
+        ),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          color: data.residualLeftCents > 0 ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+          child: ListTile(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            leading: const Icon(Icons.payments_outlined),
+            title: const Text('Income this week'),
+            subtitle: Text(data.incomeCents == 0
+                ? 'Log your pay and side income'
+                : [
+                    '${formatCents(data.incomeCents)} in',
+                    if (data.incomeTaxCents > 0) '${formatCents(data.incomeTaxCents)} for tax',
+                    if (data.residualLeftCents > 0)
+                      '${formatCents(data.residualLeftCents)} above budget',
+                  ].join(' · ')),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: onIncome,
+          ),
         ),
         const SizedBox(height: 12),
         Card(

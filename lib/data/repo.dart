@@ -99,6 +99,34 @@ class IncomeSource {
   IncomeSource(this.id, this.name, this.taxRatePercent, this.isSideIncome);
 }
 
+class Income {
+  final String id;
+  final String sourceId;
+  final int amountCents;
+  final int taxCents;
+  final DateTime receivedOn;
+  final String? note;
+  Income(this.id, this.sourceId, this.amountCents, this.taxCents, this.receivedOn, this.note);
+  int get netCents => amountCents - taxCents;
+}
+
+class IncomeWeek {
+  final DateTime weekStart;
+  final int weeklyBudgetCents;
+  final List<IncomeSource> sources;
+  final List<Income> income;
+  final int movedToJarsCents; // residual already put into jars this week
+  final List<(String, String)> jars; // (id, name)
+  IncomeWeek(this.weekStart, this.weeklyBudgetCents, this.sources, this.income,
+      this.movedToJarsCents, this.jars);
+
+  int get grossCents => income.fold(0, (s, i) => s + i.amountCents);
+  int get taxCents => income.fold(0, (s, i) => s + i.taxCents);
+  int get netCents => grossCents - taxCents;
+  int get residualCents => (netCents - weeklyBudgetCents).clamp(0, 1 << 31);
+  int get residualLeftCents => (residualCents - movedToJarsCents).clamp(0, 1 << 31);
+}
+
 class SettingsData {
   final int weeklyCents;
   final Map<String, double> percentByGroup;
@@ -121,8 +149,17 @@ class WeekData {
   final int transfersDone;
   final int jarCount;
   final int jarsSavedCents;
+  final int incomeCents;
+  final int incomeTaxCents;
+  final int residualLeftCents;
   WeekData(this.weekStart, this.weeklyCents, this.groups, this.categories, this.expenses,
-      {this.transfersToDo = 0, this.transfersDone = 0, this.jarCount = 0, this.jarsSavedCents = 0});
+      {this.transfersToDo = 0,
+      this.transfersDone = 0,
+      this.jarCount = 0,
+      this.jarsSavedCents = 0,
+      this.incomeCents = 0,
+      this.incomeTaxCents = 0,
+      this.residualLeftCents = 0});
 
   DateTime get weekEnd => addDays(weekStart, 6);
   Map<String, Category> get categoryById => {for (final c in categories) c.id: c};
@@ -173,6 +210,16 @@ class Repo {
           .select('id, jar_contribution(amount_cents, deleted_at)')
           .isFilter('deleted_at', null)
           .eq('archived', false),
+      _db
+          .from('income')
+          .select('amount_cents, tax_set_aside_cents')
+          .isFilter('deleted_at', null)
+          .gte('received_on', isoDate(ws))
+          .lte('received_on', isoDate(we)),
+      _db
+          .from('weekly_residual')
+          .select('residual_left_cents')
+          .eq('week_start', isoDate(ws)),
     ]);
 
     var configRows = results[2];
@@ -212,6 +259,11 @@ class Repo {
           for (final c in (j['jar_contribution'] as List? ?? const []))
             if (c['deleted_at'] == null) c['amount_cents'] as int,
       ].fold(0, (a, b) => a + b),
+      incomeCents: results[6].fold(0, (s, r) => s + (r['amount_cents'] as int)),
+      incomeTaxCents: results[6].fold(0, (s, r) => s + (r['tax_set_aside_cents'] as int)),
+      residualLeftCents: results[7].isEmpty
+          ? 0
+          : ((results[7].first['residual_left_cents'] as num?)?.toInt() ?? 0).clamp(0, 1 << 31),
     );
   }
 
@@ -649,4 +701,108 @@ class Repo {
   static Future<void> deleteIncomeSource(String id) => _db
       .from('income_source')
       .update({'deleted_at': DateTime.now().toUtc().toIso8601String()}).eq('id', id);
+
+  // ---------------------------------------------------------------- income
+
+  static Future<IncomeWeek> loadIncomeWeek(DateTime anyDay) async {
+    final ws = weekStartOf(anyDay);
+    final we = addDays(ws, 6);
+    final results = await Future.wait<List<Map<String, dynamic>>>([
+      _db
+          .from('income_source')
+          .select('id, name, tax_rate_percent, is_side_income')
+          .isFilter('deleted_at', null)
+          .order('created_at'),
+      _db
+          .from('income')
+          .select('id, source_id, amount_cents, tax_set_aside_cents, received_on, note')
+          .isFilter('deleted_at', null)
+          .gte('received_on', isoDate(ws))
+          .lte('received_on', isoDate(we))
+          .order('received_on', ascending: false)
+          .order('created_at', ascending: false),
+      _db
+          .from('jar_contribution')
+          .select('amount_cents')
+          .isFilter('deleted_at', null)
+          .eq('source', 'residual')
+          .gte('contributed_on', isoDate(ws))
+          .lte('contributed_on', isoDate(we)),
+      _db
+          .from('jar')
+          .select('id, name')
+          .isFilter('deleted_at', null)
+          .eq('archived', false)
+          .order('created_at')
+          .order('name'),
+    ]);
+    return IncomeWeek(
+      ws,
+      await _weeklyAmountFor(ws),
+      [
+        for (final i in results[0])
+          IncomeSource(i['id'] as String, i['name'] as String,
+              (i['tax_rate_percent'] as num).toDouble(), i['is_side_income'] as bool),
+      ],
+      [
+        for (final r in results[1])
+          Income(
+            r['id'] as String,
+            r['source_id'] as String,
+            r['amount_cents'] as int,
+            r['tax_set_aside_cents'] as int,
+            DateTime.parse(r['received_on'] as String),
+            (r['note'] as String?)?.trim().isEmpty ?? true ? null : r['note'] as String,
+          ),
+      ],
+      results[2].fold(0, (s, r) => s + (r['amount_cents'] as int)),
+      [for (final j in results[3]) (j['id'] as String, j['name'] as String)],
+    );
+  }
+
+  /// Tax is worked out from the source's rate now and stored, so a later
+  /// change to the rate doesn't rewrite past income.
+  static Future<void> addIncome({
+    required String sourceId,
+    required int amountCents,
+    required int taxCents,
+    required DateTime receivedOn,
+    String? note,
+  }) =>
+      _db.from('income').insert({
+        'source_id': sourceId,
+        'amount_cents': amountCents,
+        'tax_set_aside_cents': taxCents,
+        'received_on': isoDate(receivedOn),
+        'note': (note == null || note.trim().isEmpty) ? null : note.trim(),
+      });
+
+  static Future<void> deleteIncome(String id) => _db
+      .from('income')
+      .update({'deleted_at': DateTime.now().toUtc().toIso8601String()}).eq('id', id);
+
+  static Future<IncomeSource> addIncomeSource(
+      {required String name, required double taxRate, required bool isSide}) async {
+    final r = await _db
+        .from('income_source')
+        .insert({'name': name.trim(), 'tax_rate_percent': taxRate, 'is_side_income': isSide})
+        .select('id, name, tax_rate_percent, is_side_income')
+        .single();
+    return IncomeSource(r['id'] as String, r['name'] as String,
+        (r['tax_rate_percent'] as num).toDouble(), r['is_side_income'] as bool);
+  }
+
+  /// Moves money earned above the weekly budget into a savings jar.
+  static Future<void> moveResidualToJar(String jarId, int cents, DateTime weekStart) {
+    final today = dateOnly(DateTime.now());
+    final weekEnd = addDays(weekStart, 6);
+    // Dated inside the week it came from, so that week's residual goes down.
+    final on = today.isAfter(weekEnd) ? weekEnd : today;
+    return _db.from('jar_contribution').insert({
+      'jar_id': jarId,
+      'amount_cents': cents,
+      'source': 'residual',
+      'contributed_on': isoDate(on),
+    });
+  }
 }
