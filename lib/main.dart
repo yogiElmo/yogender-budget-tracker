@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'screens/home.dart';
 import 'screens/sign_in.dart';
+import 'util/app_version.dart';
 
 // The publishable key is meant to live in the app; row-level security protects the data.
 const supabaseUrl = 'https://riigbbhzyszajdjqvxmo.supabase.co';
@@ -14,6 +15,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Supabase.initialize(url: supabaseUrl, publishableKey: supabasePublishableKey);
   runApp(const BudgetApp());
+  reloadIfOutdated();
 }
 
 class BudgetApp extends StatelessWidget {

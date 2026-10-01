@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../data/repo.dart';
+import '../util/app_version.dart';
 import '../util/format.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -346,6 +347,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               widget.onSignOut();
             }
           },
+        ),
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text('Version $appVersion',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
         ),
       ],
     );

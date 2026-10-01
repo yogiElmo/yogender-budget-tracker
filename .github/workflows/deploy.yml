@@ -30,8 +30,14 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
-      - run: flutter build web --release --pwa-strategy=none --base-href /${{ github.event.repository.name }}/
-      - run: cp tool/cleanup_service_worker.js build/web/flutter_service_worker.js
+      - name: Build web app
+        run: |
+          VERSION="${GITHUB_SHA::7}"
+          flutter build web --release --pwa-strategy=none \
+            --dart-define=APP_VERSION="$VERSION" \
+            --base-href /${{ github.event.repository.name }}/
+          cp tool/cleanup_service_worker.js build/web/flutter_service_worker.js
+          tool/stamp_version.sh "$VERSION"
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
