@@ -41,6 +41,22 @@ class _HomeScreenState extends State<HomeScreen> {
     _reload(); // also picks up any new categories, even if nothing was saved
   }
 
+  Future<void> _confirmDelete(Expense e, String categoryName) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete this expense?'),
+        content: Text('${formatCents(e.amountCents)} · $categoryName · ${friendlyDate(e.spentOn)}'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok == true) _delete(e);
+  }
+
   Future<void> _delete(Expense e) async {
     setState(() => _hidden.add(e.id));
     final messenger = ScaffoldMessenger.of(context);
@@ -99,6 +115,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   data: data,
                   expenses: data.expenses.where((e) => !_hidden.contains(e.id)).toList(),
                   onDelete: _delete,
+                  onDeleteTap: (e) => _confirmDelete(
+                      e, data.categoryById[e.categoryId]?.name ?? 'Unknown'),
                   onAdd: () => _openAdd(data),
                 ),
               ),
@@ -112,10 +130,15 @@ class _HomeScreenState extends State<HomeScreen> {
 class _Dashboard extends StatelessWidget {
   final WeekData data;
   final List<Expense> expenses;
-  final void Function(Expense) onDelete;
+  final void Function(Expense) onDelete; // swipe: instant, with Undo
+  final void Function(Expense) onDeleteTap; // bin button: asks first
   final VoidCallback onAdd;
   const _Dashboard(
-      {required this.data, required this.expenses, required this.onDelete, required this.onAdd});
+      {required this.data,
+      required this.expenses,
+      required this.onDelete,
+      required this.onDeleteTap,
+      required this.onAdd});
 
   @override
   Widget build(BuildContext context) {
@@ -230,7 +253,7 @@ class _Dashboard extends StatelessWidget {
               Text('This week', style: theme.textTheme.titleMedium),
               const Spacer(),
               if (expenses.isNotEmpty)
-                Text('Swipe left to delete',
+                Text('Tap the bin or swipe left to delete',
                     style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
             ],
           ),
@@ -257,7 +280,17 @@ class _Dashboard extends StatelessWidget {
               contentPadding: const EdgeInsets.symmetric(horizontal: 4),
               title: Text(cats[e.categoryId]?.name ?? 'Unknown'),
               subtitle: Text([friendlyDate(e.spentOn), if (e.note != null) e.note!].join(' · ')),
-              trailing: Text(formatCents(e.amountCents), style: theme.textTheme.titleMedium),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(formatCents(e.amountCents), style: theme.textTheme.titleMedium),
+                  IconButton(
+                    tooltip: 'Delete',
+                    icon: Icon(Icons.delete_outline, color: scheme.onSurfaceVariant),
+                    onPressed: () => onDeleteTap(e),
+                  ),
+                ],
+              ),
             ),
           ),
       ],
