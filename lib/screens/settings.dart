@@ -291,17 +291,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: Text(
-                'Add where your money comes from and how much tax to set aside from each.',
+                'Add your regular pay and side income like Didi or Uber. Tax is set aside '
+                'only from side income, at the rate you choose for each.',
                 style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
           ),
         for (final src in d.incomeSources)
           ListTile(
             leading: const Icon(Icons.payments_outlined),
             title: Text(src.name),
-            subtitle: Text([
-              'Set aside ${_pct(src.taxRatePercent)} for tax',
-              if (src.isSideIncome) 'Side income',
-            ].join(' · ')),
+            subtitle: Text(src.isSideIncome
+                ? 'Side income · set aside ${_pct(src.taxRatePercent)} for tax'
+                : 'Regular pay · no tax set aside'),
             trailing: IconButton(
               tooltip: 'Remove',
               icon: const Icon(Icons.delete_outline),
@@ -597,7 +597,7 @@ class _IncomeDialogState extends State<_IncomeDialog> {
   void _submit() {
     final name = _name.text.trim();
     final rateText = _rate.text.trim();
-    final rate = rateText.isEmpty ? 0.0 : double.tryParse(rateText);
+    final rate = !_side || rateText.isEmpty ? 0.0 : double.tryParse(rateText);
     if (name.isEmpty) return setState(() => _error = 'Give it a name');
     if (rate == null || rate < 0 || rate > 100) {
       return setState(() => _error = 'Tax rate must be between 0 and 100');
@@ -619,20 +619,21 @@ class _IncomeDialogState extends State<_IncomeDialog> {
               textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(labelText: 'Name', hintText: 'e.g. Uber driving'),
             ),
-            TextField(
-              controller: _rate,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-              decoration: const InputDecoration(
-                  labelText: 'Set aside for tax', suffixText: '%', hintText: '0'),
-            ),
-            const SizedBox(height: 8),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Side income'),
+              subtitle: const Text('Didi, Uber and similar — tax gets set aside'),
               value: _side,
               onChanged: (v) => setState(() => _side = v),
             ),
+            if (_side)
+              TextField(
+                controller: _rate,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                decoration: const InputDecoration(
+                    labelText: 'Set aside for tax', suffixText: '%', hintText: 'e.g. 25'),
+              ),
             if (_error != null)
               Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ],

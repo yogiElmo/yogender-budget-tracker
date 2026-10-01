@@ -133,8 +133,9 @@ class _IncomeScreenState extends State<IncomeScreen> {
               children: [
                 Text('Week of ${friendlyDate(w.weekStart)}', style: theme.textTheme.labelLarge),
                 const SizedBox(height: 8),
-                _row('Income', formatCents(w.grossCents)),
-                _row('Set aside for tax', '− ${formatCents(w.taxCents)}'),
+                _row('Pay', formatCents(w.payCents)),
+                _row('Side income (Didi, Uber…)', formatCents(w.sideCents)),
+                _row('Tax set aside from side income', '− ${formatCents(w.taxCents)}'),
                 const Divider(),
                 _row('After tax', formatCents(w.netCents), style: bold),
                 _row('Weekly budget', formatCents(w.weeklyBudgetCents)),
@@ -183,6 +184,17 @@ class _IncomeScreenState extends State<IncomeScreen> {
           ),
         ),
 
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          color: scheme.surfaceContainerHighest,
+          child: ListTile(
+            leading: const Icon(Icons.account_balance_outlined),
+            title: const Text('Tax saved this financial year'),
+            subtitle: Text('From side income since 1 Jul ${financialYearStart(w.weekStart).year}'),
+            trailing: Text(formatCents(w.fyTaxCents), style: theme.textTheme.titleMedium),
+          ),
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 20, 4, 4),
           child: Text('This week', style: theme.textTheme.titleMedium),
@@ -246,47 +258,17 @@ class _AddIncomeSheetState extends State<_AddIncomeSheet> {
   IncomeSource? get _source =>
       _sourceId == null ? null : _sources.where((s) => s.id == _sourceId).firstOrNull;
 
-  int get _taxCents {
-    final cents = parseCents(_amount.text) ?? 0;
-    return (cents * (_source?.taxRatePercent ?? 0) / 100).round();
-  }
+  int get _taxCents => _source?.taxFor(parseCents(_amount.text) ?? 0) ?? 0;
 
   Future<void> _newSource() async {
-    final name = TextEditingController();
-    final rate = TextEditingController();
-    final ok = await showDialog<bool>(
+    final result = await showDialog<(String, double, bool)>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('New income source'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
-            controller: name,
-            autofocus: true,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Name', hintText: 'e.g. Main job'),
-          ),
-          TextField(
-            controller: rate,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-            decoration: const InputDecoration(
-                labelText: 'Set aside for tax', suffixText: '%', hintText: '0'),
-          ),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Add')),
-        ],
-      ),
+      builder: (_) => const _NewSourceDialog(),
     );
-    final n = name.text.trim();
-    final r = double.tryParse(rate.text.trim().isEmpty ? '0' : rate.text.trim());
-    name.dispose();
-    rate.dispose();
-    if (ok != true || n.isEmpty || !mounted) return;
-    if (r == null || r < 0 || r > 100) return setState(() => _error = 'Tax rate must be 0–100%');
+    if (result == null || !mounted) return;
+    final (name, rate, side) = result;
     try {
-      final created = await Repo.addIncomeSource(name: n, taxRate: r, isSide: false);
+      final created = await Repo.addIncomeSource(name: name, taxRate: rate, isSide: side);
       if (!mounted) return;
       setState(() {
         _sources.add(created);
@@ -385,10 +367,12 @@ class _AddIncomeSheetState extends State<_AddIncomeSheet> {
               Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: Text(
-                  src.taxRatePercent == 0
-                      ? 'No tax set aside for ${src.name}'
-                      : '${formatCents(_taxCents)} set aside for tax '
-                          '(${src.taxRatePercent.toStringAsFixed(src.taxRatePercent % 1 == 0 ? 0 : 1)}%)',
+                  !src.isSideIncome
+                      ? 'Regular pay — no tax set aside'
+                      : src.taxRatePercent == 0
+                          ? 'Side income — set a tax % for ${src.name} in Settings'
+                          : '${formatCents(_taxCents)} set aside for tax '
+                              '(${src.taxRatePercent.toStringAsFixed(src.taxRatePercent % 1 == 0 ? 0 : 1)}% of ${src.name})',
                   style: theme.textTheme.bodyMedium?.copyWith(color: scheme.primary),
                 ),
               ),
@@ -495,6 +479,80 @@ class _MoveDialogState extends State<_MoveDialog> {
           },
           child: const Text('Move'),
         ),
+      ],
+    );
+  }
+}
+
+// ============================================================== new source
+
+class _NewSourceDialog extends StatefulWidget {
+  const _NewSourceDialog();
+
+  @override
+  State<_NewSourceDialog> createState() => _NewSourceDialogState();
+}
+
+class _NewSourceDialogState extends State<_NewSourceDialog> {
+  final _name = TextEditingController();
+  final _rate = TextEditingController();
+  bool _side = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _rate.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _name.text.trim();
+    if (name.isEmpty) return setState(() => _error = 'Give it a name');
+    final rate = _side ? double.tryParse(_rate.text.trim().isEmpty ? '0' : _rate.text.trim()) : 0.0;
+    if (rate == null || rate < 0 || rate > 100) {
+      return setState(() => _error = 'Tax rate must be 0–100%');
+    }
+    Navigator.of(context).pop((name, rate, _side));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New income source'),
+      content: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(
+            controller: _name,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Name', hintText: 'e.g. Uber'),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Side income'),
+            subtitle: const Text('Didi, Uber and similar — tax gets set aside'),
+            value: _side,
+            onChanged: (v) => setState(() => _side = v),
+          ),
+          if (_side)
+            TextField(
+              controller: _rate,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+              decoration: const InputDecoration(
+                  labelText: 'Set aside for tax', suffixText: '%', hintText: 'e.g. 25'),
+            ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ),
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(onPressed: _submit, child: const Text('Add')),
       ],
     );
   }

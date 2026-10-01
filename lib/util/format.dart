@@ -50,3 +50,7 @@ String friendlyDate(DateTime d) {
 
 String shortRange(DateTime start, DateTime end) =>
     '${start.day} ${_monthShort[start.month - 1]} – ${end.day} ${_monthShort[end.month - 1]}';
+
+/// Australian financial year start (1 July) for the year containing [d].
+DateTime financialYearStart(DateTime d) =>
+    d.month >= 7 ? DateTime(d.year, 7, 1) : DateTime(d.year - 1, 7, 1);

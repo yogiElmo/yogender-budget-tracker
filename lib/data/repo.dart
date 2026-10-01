@@ -97,6 +97,11 @@ class IncomeSource {
   final double taxRatePercent;
   final bool isSideIncome;
   IncomeSource(this.id, this.name, this.taxRatePercent, this.isSideIncome);
+
+  /// Tax is only set aside from side income (Didi, Uber…). Regular pay, which
+  /// funds the weekly budget, never has tax taken here.
+  int taxFor(int amountCents) =>
+      isSideIncome ? (amountCents * taxRatePercent / 100).round() : 0;
 }
 
 class Income {
@@ -117,9 +122,16 @@ class IncomeWeek {
   final List<Income> income;
   final int movedToJarsCents; // residual already put into jars this week
   final List<(String, String)> jars; // (id, name)
+  final int fyTaxCents; // tax set aside since 1 July
   IncomeWeek(this.weekStart, this.weeklyBudgetCents, this.sources, this.income,
-      this.movedToJarsCents, this.jars);
+      this.movedToJarsCents, this.jars,
+      {this.fyTaxCents = 0});
 
+  Set<String> get _sideIds => {for (final s in sources) if (s.isSideIncome) s.id};
+  int get payCents =>
+      income.where((i) => !_sideIds.contains(i.sourceId)).fold(0, (s, i) => s + i.amountCents);
+  int get sideCents =>
+      income.where((i) => _sideIds.contains(i.sourceId)).fold(0, (s, i) => s + i.amountCents);
   int get grossCents => income.fold(0, (s, i) => s + i.amountCents);
   int get taxCents => income.fold(0, (s, i) => s + i.taxCents);
   int get netCents => grossCents - taxCents;
@@ -692,7 +704,11 @@ class Repo {
 
   static Future<void> saveIncomeSource(
       {String? id, required String name, required double taxRate, required bool isSide}) {
-    final data = {'name': name.trim(), 'tax_rate_percent': taxRate, 'is_side_income': isSide};
+    final data = {
+      'name': name.trim(),
+      'tax_rate_percent': isSide ? taxRate : 0,
+      'is_side_income': isSide,
+    };
     return id == null
         ? _db.from('income_source').insert(data)
         : _db.from('income_source').update(data).eq('id', id);
@@ -735,6 +751,12 @@ class Repo {
           .eq('archived', false)
           .order('created_at')
           .order('name'),
+      _db
+          .from('income')
+          .select('tax_set_aside_cents')
+          .isFilter('deleted_at', null)
+          .gte('received_on', isoDate(financialYearStart(anyDay)))
+          .gt('tax_set_aside_cents', 0),
     ]);
     return IncomeWeek(
       ws,
@@ -757,6 +779,7 @@ class Repo {
       ],
       results[2].fold(0, (s, r) => s + (r['amount_cents'] as int)),
       [for (final j in results[3]) (j['id'] as String, j['name'] as String)],
+      fyTaxCents: results[4].fold(0, (s, r) => s + (r['tax_set_aside_cents'] as int)),
     );
   }
 
@@ -785,7 +808,11 @@ class Repo {
       {required String name, required double taxRate, required bool isSide}) async {
     final r = await _db
         .from('income_source')
-        .insert({'name': name.trim(), 'tax_rate_percent': taxRate, 'is_side_income': isSide})
+        .insert({
+          'name': name.trim(),
+          'tax_rate_percent': isSide ? taxRate : 0,
+          'is_side_income': isSide,
+        })
         .select('id, name, tax_rate_percent, is_side_income')
         .single();
     return IncomeSource(r['id'] as String, r['name'] as String,
