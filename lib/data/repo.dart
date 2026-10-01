@@ -71,6 +71,26 @@ class Payday {
   Payday(this.allocationId, this.weekStart, this.weeklyCents, this.lines);
 }
 
+class JarContribution {
+  final String id;
+  final int amountCents;
+  final DateTime on;
+  JarContribution(this.id, this.amountCents, this.on);
+}
+
+class Jar {
+  final String id;
+  final String name;
+  final int? targetCents;
+  final DateTime? targetDate;
+  final List<JarContribution> contributions; // newest first
+  Jar(this.id, this.name, this.targetCents, this.targetDate, this.contributions);
+
+  int get savedCents => contributions.fold(0, (s, c) => s + c.amountCents);
+  double? get progress =>
+      targetCents == null || targetCents == 0 ? null : (savedCents / targetCents!).clamp(0, 1);
+}
+
 class WeekData {
   final DateTime weekStart;
   final int weeklyCents;
@@ -79,8 +99,10 @@ class WeekData {
   final List<Expense> expenses;
   final int transfersToDo; // payday transfers with an amount set this week
   final int transfersDone;
+  final int jarCount;
+  final int jarsSavedCents;
   WeekData(this.weekStart, this.weeklyCents, this.groups, this.categories, this.expenses,
-      {this.transfersToDo = 0, this.transfersDone = 0});
+      {this.transfersToDo = 0, this.transfersDone = 0, this.jarCount = 0, this.jarsSavedCents = 0});
 
   DateTime get weekEnd => addDays(weekStart, 6);
   Map<String, Category> get categoryById => {for (final c in categories) c.id: c};
@@ -126,6 +148,11 @@ class Repo {
           .select('allocation_line(planned_cents, done, deleted_at)')
           .isFilter('deleted_at', null)
           .eq('week_start', isoDate(ws)),
+      _db
+          .from('jar')
+          .select('id, jar_contribution(amount_cents, deleted_at)')
+          .isFilter('deleted_at', null)
+          .eq('archived', false),
     ]);
 
     var configRows = results[2];
@@ -159,6 +186,12 @@ class Repo {
       [for (final e in results[3]) Expense.fromRow(e)],
       transfersToDo: _activeLines(results[4]).length,
       transfersDone: _activeLines(results[4]).where((l) => l['done'] == true).length,
+      jarCount: results[5].length,
+      jarsSavedCents: [
+        for (final j in results[5])
+          for (final c in (j['jar_contribution'] as List? ?? const []))
+            if (c['deleted_at'] == null) c['amount_cents'] as int,
+      ].fold(0, (a, b) => a + b),
     );
   }
 
@@ -356,4 +389,69 @@ class Repo {
   static Future<void> setPaydayStatus(String allocationId, bool allDone) => _db
       .from('allocation')
       .update({'status': allDone ? 'done' : 'open'}).eq('id', allocationId);
+
+  // ---------------------------------------------------------------- jars
+
+  static Future<List<Jar>> loadJars() async {
+    final rows = await _db
+        .from('jar')
+        .select('id, name, target_cents, target_date, '
+            'jar_contribution(id, amount_cents, contributed_on, created_at, deleted_at)')
+        .isFilter('deleted_at', null)
+        .eq('archived', false)
+        .order('created_at')
+        .order('name');
+    return [
+      for (final r in rows)
+        Jar(
+          r['id'] as String,
+          r['name'] as String,
+          r['target_cents'] as int?,
+          r['target_date'] == null ? null : DateTime.parse(r['target_date'] as String),
+          ([
+            for (final c in (r['jar_contribution'] as List? ?? const []))
+              if (c['deleted_at'] == null) c as Map<String, dynamic>,
+          ]..sort((a, b) {
+                  final byDay = (b['contributed_on'] as String).compareTo(a['contributed_on'] as String);
+                  return byDay != 0
+                      ? byDay
+                      : (b['created_at'] as String).compareTo(a['created_at'] as String);
+                }))
+              .map((c) => JarContribution(c['id'] as String, c['amount_cents'] as int,
+                  DateTime.parse(c['contributed_on'] as String)))
+              .toList(),
+        ),
+    ];
+  }
+
+  static Future<void> addJar({required String name, int? targetCents, DateTime? targetDate}) =>
+      _db.from('jar').insert({
+        'name': name.trim(),
+        'target_cents': targetCents,
+        'target_date': targetDate == null ? null : isoDate(targetDate),
+      });
+
+  static Future<void> updateJar(String id,
+          {required String name, int? targetCents, DateTime? targetDate}) =>
+      _db.from('jar').update({
+        'name': name.trim(),
+        'target_cents': targetCents,
+        'target_date': targetDate == null ? null : isoDate(targetDate),
+      }).eq('id', id);
+
+  /// Hides a finished or abandoned jar; its history is kept.
+  static Future<void> archiveJar(String id) =>
+      _db.from('jar').update({'archived': true}).eq('id', id);
+
+  static Future<void> addToJar(String jarId, int cents, DateTime on) =>
+      _db.from('jar_contribution').insert({
+        'jar_id': jarId,
+        'amount_cents': cents,
+        'source': 'other',
+        'contributed_on': isoDate(on),
+      });
+
+  static Future<void> deleteJarContribution(String id) => _db
+      .from('jar_contribution')
+      .update({'deleted_at': DateTime.now().toUtc().toIso8601String()}).eq('id', id);
 }

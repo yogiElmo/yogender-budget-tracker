@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/repo.dart';
 import '../util/format.dart';
 import 'add_expense.dart';
+import 'jars.dart';
 import 'payday.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -40,6 +41,11 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
     _reload(); // also picks up any new categories, even if nothing was saved
+  }
+
+  Future<void> _openJars() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JarsScreen()));
+    if (mounted) _reload();
   }
 
   Future<void> _openPayday() async {
@@ -125,6 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       e, data.categoryById[e.categoryId]?.name ?? 'Unknown'),
                   onAdd: () => _openAdd(data),
                   onPayday: _openPayday,
+                  onJars: _openJars,
                 ),
               ),
           },
@@ -141,13 +148,15 @@ class _Dashboard extends StatelessWidget {
   final void Function(Expense) onDeleteTap; // bin button: asks first
   final VoidCallback onAdd;
   final VoidCallback onPayday;
+  final VoidCallback onJars;
   const _Dashboard(
       {required this.data,
       required this.expenses,
       required this.onDelete,
       required this.onDeleteTap,
       required this.onAdd,
-      required this.onPayday});
+      required this.onPayday,
+      required this.onJars});
 
   @override
   Widget build(BuildContext context) {
@@ -250,6 +259,22 @@ class _Dashboard extends StatelessWidget {
           done: data.transfersDone,
           isPayday: DateTime.now().weekday == DateTime.tuesday,
           onTap: onPayday,
+        ),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          color: scheme.surfaceContainerHighest,
+          child: ListTile(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            leading: const Icon(Icons.savings_outlined),
+            title: const Text('Savings jars'),
+            subtitle: Text(data.jarCount == 0
+                ? 'Start a savings goal'
+                : '${formatCents(data.jarsSavedCents)} saved across ${data.jarCount} '
+                    '${data.jarCount == 1 ? 'jar' : 'jars'}'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: onJars,
+          ),
         ),
         const SizedBox(height: 12),
 
