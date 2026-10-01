@@ -221,7 +221,17 @@ class _Dashboard extends StatelessWidget {
         // This week's entries
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 20, 4, 4),
-          child: Text('This week', style: theme.textTheme.titleMedium),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text('This week', style: theme.textTheme.titleMedium),
+              const Spacer(),
+              if (expenses.isNotEmpty)
+                Text('Swipe left to delete',
+                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+            ],
+          ),
         ),
         if (expenses.isEmpty)
           Padding(
@@ -248,13 +258,6 @@ class _Dashboard extends StatelessWidget {
               trailing: Text(formatCents(e.amountCents), style: theme.textTheme.titleMedium),
             ),
           ),
-        if (expenses.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text('Swipe left on an entry to delete it',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
-          ),
       ],
     );
   }
@@ -265,7 +268,7 @@ class _WeekStrip extends StatelessWidget {
   final Set<DateTime> logged;
   const _WeekStrip({required this.weekStart, required this.logged});
 
-  static const _letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  static const _letters = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 
   @override
   Widget build(BuildContext context) {
