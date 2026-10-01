@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/repo.dart';
 import '../util/format.dart';
 import 'add_expense.dart';
+import 'payday.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback onSignOut;
@@ -39,6 +40,11 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
     _reload(); // also picks up any new categories, even if nothing was saved
+  }
+
+  Future<void> _openPayday() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaydayScreen()));
+    if (mounted) _reload();
   }
 
   Future<void> _confirmDelete(Expense e, String categoryName) async {
@@ -118,6 +124,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onDeleteTap: (e) => _confirmDelete(
                       e, data.categoryById[e.categoryId]?.name ?? 'Unknown'),
                   onAdd: () => _openAdd(data),
+                  onPayday: _openPayday,
                 ),
               ),
           },
@@ -133,12 +140,14 @@ class _Dashboard extends StatelessWidget {
   final void Function(Expense) onDelete; // swipe: instant, with Undo
   final void Function(Expense) onDeleteTap; // bin button: asks first
   final VoidCallback onAdd;
+  final VoidCallback onPayday;
   const _Dashboard(
       {required this.data,
       required this.expenses,
       required this.onDelete,
       required this.onDeleteTap,
-      required this.onAdd});
+      required this.onAdd,
+      required this.onPayday});
 
   @override
   Widget build(BuildContext context) {
@@ -232,6 +241,15 @@ class _Dashboard extends StatelessWidget {
               ),
             ),
           ),
+        ),
+        const SizedBox(height: 12),
+
+        // Payday transfers
+        _PaydayCard(
+          toDo: data.transfersToDo,
+          done: data.transfersDone,
+          isPayday: DateTime.now().weekday == DateTime.tuesday,
+          onTap: onPayday,
         ),
         const SizedBox(height: 12),
 
@@ -411,6 +429,41 @@ class _ErrorView extends StatelessWidget {
             FilledButton(onPressed: onRetry, child: const Text('Try again')),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PaydayCard extends StatelessWidget {
+  final int toDo;
+  final int done;
+  final bool isPayday;
+  final VoidCallback onTap;
+  const _PaydayCard(
+      {required this.toDo, required this.done, required this.isPayday, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final allDone = toDo > 0 && done == toDo;
+    final highlight = isPayday && !allDone;
+    final subtitle = toDo == 0
+        ? 'Set up your weekly transfers'
+        : allDone
+            ? 'All done this week'
+            : '$done of $toDo done${isPayday ? ' — it\'s payday' : ''}';
+    return Card(
+      elevation: 0,
+      color: highlight ? scheme.tertiaryContainer : scheme.surfaceContainerHighest,
+      child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        leading: Icon(allDone ? Icons.check_circle : Icons.account_balance_outlined,
+            color: allDone ? scheme.primary : null),
+        title: const Text('Payday transfers'),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
       ),
     );
   }
