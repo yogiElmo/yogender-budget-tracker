@@ -150,6 +150,16 @@ class Repo {
     return out;
   }
 
+  /// Adds a category under Needs, Wants or Savings and returns it.
+  static Future<Category> addCategory({required String name, required String groupId}) async {
+    final row = await _db
+        .from('category')
+        .insert({'name': name.trim(), 'group_id': groupId})
+        .select('id, name, group_id')
+        .single();
+    return Category(row['id'] as String, row['name'] as String, row['group_id'] as String);
+  }
+
   static Future<void> addExpense({
     required int amountCents,
     required String categoryId,

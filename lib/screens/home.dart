@@ -34,9 +34,11 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => AddExpenseScreen(groups: data.groups, categories: data.categories),
       ),
     );
-    if (message == null || !mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-    _reload();
+    if (!mounted) return;
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    }
+    _reload(); // also picks up any new categories, even if nothing was saved
   }
 
   Future<void> _delete(Expense e) async {

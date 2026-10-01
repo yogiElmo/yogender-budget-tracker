@@ -25,8 +25,9 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   DateTime _otherDate = dateOnly(DateTime.now());
   bool _saving = false;
   late final Future<List<QuickEntry>> _quick = Repo.quickEntries();
+  late final List<Category> _categories = [...widget.categories];
 
-  Map<String, Category> get _catById => {for (final c in widget.categories) c.id: c};
+  Map<String, Category> get _catById => {for (final c in _categories) c.id: c};
 
   DateTime get _date => switch (_day) {
         _Day.today => dateOnly(DateTime.now()),
@@ -67,6 +68,50 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   void _toast(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
+  Future<void> _newCategory(Group group) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('New ${group.name} category'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(hintText: 'e.g. Haircut'),
+          onSubmitted: (v) => Navigator.of(context).pop(v),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(controller.text),
+              child: const Text('Add')),
+        ],
+      ),
+    );
+    controller.dispose();
+    final trimmed = name?.trim() ?? '';
+    if (trimmed.isEmpty || !mounted) return;
+
+    // Already exists in this group? Just select it.
+    final existing = _categories.where(
+        (c) => c.groupId == group.id && c.name.toLowerCase() == trimmed.toLowerCase());
+    if (existing.isNotEmpty) {
+      setState(() => _categoryId = existing.first.id);
+      return;
+    }
+    try {
+      final created = await Repo.addCategory(name: trimmed, groupId: group.id);
+      if (!mounted) return;
+      setState(() {
+        _categories.add(created);
+        _categoryId = created.id;
+      });
+    } catch (_) {
+      _toast('Couldn\'t add the category — try again');
+    }
+  }
+
   Future<void> _pickDate() async {
     final now = DateTime.now();
     final picked = await showDatePicker(
@@ -106,9 +151,14 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                     textInputAction: TextInputAction.done,
                     style: theme.textTheme.displaySmall,
                     decoration: InputDecoration(
-                      prefixText: '\$ ',
-                      prefixStyle: theme.textTheme.displaySmall
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      // An icon-slot prefix stays visible even before the field is tapped.
+                      prefixIcon: Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text('\$',
+                            style: theme.textTheme.displaySmall
+                                ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                      ),
+                      prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
                       hintText: '0.00',
                       border: InputBorder.none,
                     ),
@@ -165,12 +215,17 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        for (final c in widget.categories.where((c) => c.groupId == g.id))
+                        for (final c in _categories.where((c) => c.groupId == g.id))
                           ChoiceChip(
                             label: Text(c.name),
                             selected: _categoryId == c.id,
                             onSelected: (_) => setState(() => _categoryId = c.id),
                           ),
+                        ActionChip(
+                          avatar: const Icon(Icons.add, size: 18),
+                          label: const Text('New'),
+                          onPressed: _saving ? null : () => _newCategory(g),
+                        ),
                       ],
                     ),
                   ],
