@@ -91,6 +91,26 @@ class Jar {
       targetCents == null || targetCents == 0 ? null : (savedCents / targetCents!).clamp(0, 1);
 }
 
+class IncomeSource {
+  final String id;
+  final String name;
+  final double taxRatePercent;
+  final bool isSideIncome;
+  IncomeSource(this.id, this.name, this.taxRatePercent, this.isSideIncome);
+}
+
+class SettingsData {
+  final int weeklyCents;
+  final Map<String, double> percentByGroup;
+  final DateTime? budgetFrom;
+  final List<Group> groups;
+  final List<(Category, bool)> categories; // (category, archived)
+  final List<(Account, bool)> accounts; // (account, active)
+  final List<IncomeSource> incomeSources;
+  SettingsData(this.weeklyCents, this.percentByGroup, this.budgetFrom, this.groups, this.categories,
+      this.accounts, this.incomeSources);
+}
+
 class WeekData {
   final DateTime weekStart;
   final int weeklyCents;
@@ -491,4 +511,142 @@ class Repo {
         .limit(2000);
     return [for (final r in rows) Expense.fromRow(r)];
   }
+
+  // ---------------------------------------------------------------- settings
+
+  static Future<SettingsData> loadSettings() async {
+    final results = await Future.wait<List<Map<String, dynamic>>>([
+      _db
+          .from('budget_config')
+          .select('weekly_amount_cents, effective_from, budget_split(group_id, percent, deleted_at)')
+          .isFilter('deleted_at', null)
+          .lte('effective_from', isoDate(weekStartOf(DateTime.now())))
+          .order('effective_from', ascending: false)
+          .limit(1),
+      _db
+          .from('category_group')
+          .select('id, name, sort_order')
+          .isFilter('deleted_at', null)
+          .order('sort_order'),
+      _db
+          .from('category')
+          .select('id, name, group_id, archived')
+          .isFilter('deleted_at', null)
+          .order('name'),
+      _db
+          .from('account')
+          .select('id, name, type, purpose, active')
+          .isFilter('deleted_at', null)
+          .order('created_at')
+          .order('name'),
+      _db
+          .from('income_source')
+          .select('id, name, tax_rate_percent, is_side_income')
+          .isFilter('deleted_at', null)
+          .order('created_at'),
+    ]);
+    var config = results[0].isEmpty ? null : results[0].first;
+    if (config == null) {
+      final newest = await _db
+          .from('budget_config')
+          .select('weekly_amount_cents, effective_from, budget_split(group_id, percent, deleted_at)')
+          .isFilter('deleted_at', null)
+          .order('effective_from', ascending: false)
+          .limit(1);
+      config = newest.isEmpty ? null : newest.first;
+    }
+    return SettingsData(
+      config?['weekly_amount_cents'] as int? ?? 0,
+      {
+        for (final sp in (config?['budget_split'] as List? ?? const []))
+          if (sp['deleted_at'] == null) sp['group_id'] as String: (sp['percent'] as num).toDouble(),
+      },
+      config == null ? null : DateTime.parse(config['effective_from'] as String),
+      [
+        for (final g in results[1])
+          Group(g['id'] as String, g['name'] as String, g['sort_order'] as int, 0),
+      ],
+      [
+        for (final c in results[2])
+          (
+            Category(c['id'] as String, c['name'] as String, c['group_id'] as String),
+            c['archived'] as bool,
+          ),
+      ],
+      [
+        for (final a in results[3])
+          (
+            Account(a['id'] as String, a['name'] as String, a['type'] as String,
+                a['purpose'] as String?),
+            a['active'] as bool,
+          ),
+      ],
+      [
+        for (final i in results[4])
+          IncomeSource(i['id'] as String, i['name'] as String,
+              (i['tax_rate_percent'] as num).toDouble(), i['is_side_income'] as bool),
+      ],
+    );
+  }
+
+  /// Saves a new weekly amount and split, starting this week. Earlier weeks keep
+  /// the numbers they had; a second change in the same week replaces the first.
+  static Future<void> saveBudget(int weeklyCents, Map<String, double> percentByGroup) async {
+    final ws = isoDate(weekStartOf(DateTime.now()));
+    final existing = await _db
+        .from('budget_config')
+        .select('id')
+        .isFilter('deleted_at', null)
+        .eq('effective_from', ws)
+        .maybeSingle();
+    final String configId;
+    if (existing != null) {
+      configId = existing['id'] as String;
+      await _db.from('budget_config').update({'weekly_amount_cents': weeklyCents}).eq('id', configId);
+    } else {
+      final row = await _db
+          .from('budget_config')
+          .insert({'weekly_amount_cents': weeklyCents, 'effective_from': ws})
+          .select('id')
+          .single();
+      configId = row['id'] as String;
+    }
+    await _db.from('budget_split').upsert([
+      for (final e in percentByGroup.entries)
+        {'config_id': configId, 'group_id': e.key, 'percent': e.value, 'deleted_at': null},
+    ], onConflict: 'config_id,group_id');
+  }
+
+  static Future<void> renameCategory(String id, String name) =>
+      _db.from('category').update({'name': name.trim()}).eq('id', id);
+
+  static Future<void> setCategoryArchived(String id, bool archived) =>
+      _db.from('category').update({'archived': archived}).eq('id', id);
+
+  static Future<void> saveAccount(
+      {String? id, required String name, required String type, String? purpose}) {
+    final data = {
+      'name': name.trim(),
+      'type': type,
+      'purpose': (purpose == null || purpose.trim().isEmpty) ? null : purpose.trim(),
+    };
+    return id == null
+        ? _db.from('account').insert(data)
+        : _db.from('account').update(data).eq('id', id);
+  }
+
+  static Future<void> setAccountActive(String id, bool active) =>
+      _db.from('account').update({'active': active}).eq('id', id);
+
+  static Future<void> saveIncomeSource(
+      {String? id, required String name, required double taxRate, required bool isSide}) {
+    final data = {'name': name.trim(), 'tax_rate_percent': taxRate, 'is_side_income': isSide};
+    return id == null
+        ? _db.from('income_source').insert(data)
+        : _db.from('income_source').update(data).eq('id', id);
+  }
+
+  static Future<void> deleteIncomeSource(String id) => _db
+      .from('income_source')
+      .update({'deleted_at': DateTime.now().toUtc().toIso8601String()}).eq('id', id);
 }

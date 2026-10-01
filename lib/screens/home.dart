@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../data/repo.dart';
 import '../util/format.dart';
@@ -6,6 +7,7 @@ import 'add_expense.dart';
 import 'history.dart';
 import 'jars.dart';
 import 'payday.dart';
+import 'settings.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback onSignOut;
@@ -42,6 +44,13 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
     _reload(); // also picks up any new categories, even if nothing was saved
+  }
+
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => SettingsScreen(onSignOut: widget.onSignOut)));
+    // Skip the refresh if they signed out from Settings.
+    if (mounted && Supabase.instance.client.auth.currentSession != null) _reload();
   }
 
   Future<void> _openHistory() async {
@@ -116,9 +125,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 onPressed: _openHistory,
               ),
               IconButton(
-                tooltip: 'Sign out',
-                icon: const Icon(Icons.logout),
-                onPressed: widget.onSignOut,
+                tooltip: 'Settings',
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: _openSettings,
               ),
             ],
           ),
