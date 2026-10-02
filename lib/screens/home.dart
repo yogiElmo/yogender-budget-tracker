@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../data/repo.dart';
 import '../util/format.dart';
 import 'add_expense.dart';
+import 'fixed_expenses.dart';
 import 'history.dart';
 import 'income.dart';
 import 'insights.dart';
@@ -25,11 +26,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<WeekData> _firstLoad() async {
     await Repo.seed();
+    await Repo.postDueFixed(); // log rent, bills etc. that have fallen due
+    return Repo.loadWeek(DateTime.now());
+  }
+
+  Future<WeekData> _postAndLoad() async {
+    await Repo.postDueFixed();
     return Repo.loadWeek(DateTime.now());
   }
 
   Future<void> _reload() async {
-    final next = Repo.loadWeek(DateTime.now());
+    final next = _postAndLoad();
     setState(() => _future = next);
     await next;
   }
@@ -57,6 +64,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _openHistory() async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HistoryScreen()));
+    if (mounted) _reload();
+  }
+
+  Future<void> _openFixed() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FixedExpensesScreen()));
     if (mounted) _reload();
   }
 
@@ -169,6 +181,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPayday: _openPayday,
                   onJars: _openJars,
                   onIncome: _openIncome,
+                  onFixed: _openFixed,
                 ),
               ),
           },
@@ -187,6 +200,7 @@ class _Dashboard extends StatelessWidget {
   final VoidCallback onPayday;
   final VoidCallback onJars;
   final VoidCallback onIncome;
+  final VoidCallback onFixed;
   const _Dashboard(
       {required this.data,
       required this.expenses,
@@ -195,7 +209,8 @@ class _Dashboard extends StatelessWidget {
       required this.onAdd,
       required this.onPayday,
       required this.onJars,
-      required this.onIncome});
+      required this.onIncome,
+      required this.onFixed});
 
   @override
   Widget build(BuildContext context) {
@@ -292,6 +307,26 @@ class _Dashboard extends StatelessWidget {
         ),
         const SizedBox(height: 12),
 
+        // Fixed expenses
+        Card(
+          elevation: 0,
+          color: scheme.surfaceContainerHighest,
+          child: ListTile(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            leading: const Icon(Icons.repeat),
+            title: const Text('Fixed expenses'),
+            subtitle: Text(switch (data.fixed) {
+              null => 'Rent, bills and regular costs',
+              (_, 0) => 'Add rent, bills and regular costs',
+              (final cents, final n) => '${formatCents(cents)} a week · $n ${n == 1 ? 'item' : 'items'}'
+                  ' · ${formatCents(data.weeklyCents - cents)} left for everything else',
+            }),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: onFixed,
+          ),
+        ),
+        const SizedBox(height: 12),
+
         // Payday transfers
         _PaydayCard(
           toDo: data.transfersToDo,
@@ -381,7 +416,11 @@ class _Dashboard extends StatelessWidget {
             child: ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 4),
               title: Text(cats[e.categoryId]?.name ?? 'Unknown'),
-              subtitle: Text([friendlyDate(e.spentOn), if (e.note != null) e.note!].join(' · ')),
+              subtitle: Text([
+                friendlyDate(e.spentOn),
+                if (e.isFixed) 'Fixed',
+                if (e.note != null) e.note!,
+              ].join(' · ')),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

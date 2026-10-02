@@ -294,7 +294,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
               contentPadding: const EdgeInsets.only(left: 4),
               title: Text(cats[e.categoryId]?.name ?? 'Unknown',
                   style: theme.textTheme.bodyLarge),
-              subtitle: e.note == null ? null : Text(e.note!),
+              subtitle: e.note == null && !e.isFixed
+                  ? null
+                  : Text([if (e.isFixed) 'Fixed', if (e.note != null) e.note!].join(' · ')),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

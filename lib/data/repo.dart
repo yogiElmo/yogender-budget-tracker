@@ -31,7 +31,9 @@ class Expense {
   final String categoryId;
   final DateTime spentOn;
   final String? note;
-  Expense(this.id, this.amountCents, this.categoryId, this.spentOn, this.note);
+  final bool isFixed; // logged automatically by a fixed expense
+  Expense(this.id, this.amountCents, this.categoryId, this.spentOn, this.note,
+      {this.isFixed = false});
 
   factory Expense.fromRow(Map<String, dynamic> r) => Expense(
         r['id'] as String,
@@ -39,7 +41,34 @@ class Expense {
         r['category_id'] as String,
         DateTime.parse(r['spent_on'] as String),
         (r['note'] as String?)?.trim().isEmpty ?? true ? null : r['note'] as String,
+        isFixed: r['recurring_id'] != null,
       );
+}
+
+class FixedExpense {
+  final String id;
+  final String name;
+  final int amountCents;
+  final String categoryId;
+  final String frequency; // weekly | fortnightly | monthly
+  final DateTime nextDue;
+  final bool active;
+  FixedExpense(this.id, this.name, this.amountCents, this.categoryId, this.frequency, this.nextDue,
+      this.active);
+
+  /// Average cost per week, so different frequencies can be added up.
+  int get weeklyCents => switch (frequency) {
+        'weekly' => amountCents,
+        'fortnightly' => (amountCents / 2).round(),
+        _ => (amountCents * 12 / 52).round(),
+      };
+}
+
+class FixedData {
+  final List<FixedExpense> items;
+  final List<Group> groups;
+  final List<Category> categories;
+  FixedData(this.items, this.groups, this.categories);
 }
 
 /// A repeat of something logged before, for one-tap logging.
@@ -167,6 +196,7 @@ class WeekData {
   final int incomeCents;
   final int incomeTaxCents;
   final int residualLeftCents;
+  final (int, int)? fixed; // (weekly cost, count), or null if not set up yet
   WeekData(this.weekStart, this.weeklyCents, this.groups, this.categories, this.expenses,
       {this.transfersToDo = 0,
       this.transfersDone = 0,
@@ -174,7 +204,8 @@ class WeekData {
       this.jarsSavedCents = 0,
       this.incomeCents = 0,
       this.incomeTaxCents = 0,
-      this.residualLeftCents = 0});
+      this.residualLeftCents = 0,
+      this.fixed});
 
   DateTime get weekEnd => addDays(weekStart, 6);
   Map<String, Category> get categoryById => {for (final c in categories) c.id: c};
@@ -209,7 +240,7 @@ class Repo {
           .limit(1),
       _db
           .from('expense')
-          .select('id, amount_cents, category_id, spent_on, note')
+          .select()
           .isFilter('deleted_at', null)
           .gte('spent_on', isoDate(ws))
           .lte('spent_on', isoDate(we))
@@ -237,6 +268,7 @@ class Repo {
           .eq('week_start', isoDate(ws)),
     ]);
 
+    final fixed = await fixedSummary();
     var configRows = results[2];
     if (configRows.isEmpty) {
       // Budget was set up later in the week than this week's Tuesday: use the newest one.
@@ -279,6 +311,7 @@ class Repo {
       residualLeftCents: results[7].isEmpty
           ? 0
           : ((results[7].first['residual_left_cents'] as num?)?.toInt() ?? 0).clamp(0, 1 << 31),
+      fixed: fixed,
     );
   }
 
@@ -569,7 +602,7 @@ class Repo {
   static Future<List<Expense>> loadExpenses(DateTime from, DateTime to) async {
     final rows = await _db
         .from('expense')
-        .select('id, amount_cents, category_id, spent_on, note')
+        .select()
         .isFilter('deleted_at', null)
         .gte('spent_on', isoDate(from))
         .lte('spent_on', isoDate(to))
@@ -858,7 +891,7 @@ class Repo {
       _db.from('category').select('id, name, group_id').isFilter('deleted_at', null),
       _db
           .from('expense')
-          .select('id, amount_cents, category_id, spent_on, note')
+          .select()
           .isFilter('deleted_at', null)
           .gte('spent_on', isoDate(from))
           .lte('spent_on', isoDate(to))
@@ -888,5 +921,117 @@ class Repo {
       ],
       [for (final e in results[3]) Expense.fromRow(e)],
     );
+  }
+
+  // ---------------------------------------------------------------- fixed expenses
+
+  /// Logs any fixed expenses that have fallen due. Quietly does nothing if the
+  /// fixed-expenses database step hasn't been run yet.
+  static Future<int> postDueFixed() async {
+    try {
+      final n = await _db.rpc('post_due_fixed_expenses', params: {'p_today': isoDate(DateTime.now())});
+      return (n as num?)?.toInt() ?? 0;
+    } on PostgrestException {
+      return 0;
+    }
+  }
+
+  static Future<FixedData> loadFixed() async {
+    final results = await Future.wait<List<Map<String, dynamic>>>([
+      _db
+          .from('recurring_expense')
+          .select('id, name, amount_cents, category_id, frequency, next_due, active')
+          .isFilter('deleted_at', null)
+          .order('next_due')
+          .order('name'),
+      _db
+          .from('category_group')
+          .select('id, name, sort_order')
+          .isFilter('deleted_at', null)
+          .order('sort_order'),
+      _db
+          .from('category')
+          .select('id, name, group_id')
+          .isFilter('deleted_at', null)
+          .eq('archived', false)
+          .order('name'),
+    ]);
+    return FixedData(
+      [
+        for (final r in results[0])
+          FixedExpense(
+            r['id'] as String,
+            r['name'] as String,
+            r['amount_cents'] as int,
+            r['category_id'] as String,
+            r['frequency'] as String,
+            DateTime.parse(r['next_due'] as String),
+            r['active'] as bool,
+          ),
+      ],
+      [
+        for (final g in results[1])
+          Group(g['id'] as String, g['name'] as String, g['sort_order'] as int, 0),
+      ],
+      [
+        for (final c in results[2])
+          Category(c['id'] as String, c['name'] as String, c['group_id'] as String),
+      ],
+    );
+  }
+
+  /// Creates or edits a fixed expense. [nextDue] is the next date it logs;
+  /// monthly ones keep that day of the month.
+  static Future<void> saveFixed({
+    String? id,
+    required String name,
+    required int amountCents,
+    required String categoryId,
+    required String frequency,
+    required DateTime nextDue,
+  }) async {
+    final data = {
+      'name': name.trim(),
+      'amount_cents': amountCents,
+      'category_id': categoryId,
+      'frequency': frequency,
+      'start_date': isoDate(nextDue),
+      'next_due': isoDate(nextDue),
+    };
+    if (id == null) {
+      await _db.from('recurring_expense').insert(data);
+    } else {
+      await _db.from('recurring_expense').update(data).eq('id', id);
+    }
+  }
+
+  static Future<void> setFixedActive(String id, bool active) =>
+      _db.from('recurring_expense').update({'active': active}).eq('id', id);
+
+  /// Stops it; expenses it already logged stay in your history.
+  static Future<void> deleteFixed(String id) => _db
+      .from('recurring_expense')
+      .update({'deleted_at': DateTime.now().toUtc().toIso8601String(), 'active': false}).eq('id', id);
+
+  /// Weekly-average total of active fixed expenses, for the home card.
+  /// Returns null if the fixed-expenses database step hasn't been run yet.
+  static Future<(int, int)?> fixedSummary() async {
+    try {
+      final rows = await _db
+          .from('recurring_expense')
+          .select('amount_cents, frequency')
+          .isFilter('deleted_at', null)
+          .eq('active', true);
+      final total = rows.fold<int>(
+          0,
+          (s, r) =>
+              s +
+              FixedExpense('', '', r['amount_cents'] as int, '', r['frequency'] as String,
+                      DateTime(2000), true)
+                  .weeklyCents);
+      return (total, rows.length);
+    } on PostgrestException {
+      return null;
+    }
   }
 }
